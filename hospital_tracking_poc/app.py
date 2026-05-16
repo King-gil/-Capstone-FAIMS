@@ -19,6 +19,7 @@ TARGET_ASSETS = {
 }
 
 LATEST_DATA = {}
+NEARBY_DEVICES = []
 
 
 # -----------------------------
@@ -85,6 +86,7 @@ async def ble_scanner_loop():
         try:
             devices = await BleakScanner.discover(timeout=3.0)
 
+            NEARBY_DEVICES = []
             current_scan = {}
 
             # initialize all assets as offline
@@ -160,6 +162,10 @@ def index():
 @app.route("/api/assets")
 def get_assets():
     return jsonify(list(LATEST_DATA.values()))
+
+@app.route("/api/nearby")
+def nearby():
+    return jsonify(NEARBY_DEVICES)
 
 
 # -----------------------------

@@ -65,6 +65,13 @@
     </div>
 </div>
 
+<div class="row mt-5">
+    <div class="col">
+        <h5 class="text-secondary">Nearby BLE Devices (Including Phones)</h5>
+        <div id="nearby-container" class="row row-cols-1 row-cols-md-3 g-3"></div>
+    </div>
+</div>
+
 <!-- SCRIPT -->
 <script>
 
@@ -178,6 +185,36 @@ async function updateDashboard() {
         `;
     }
 }
+async function updateNearby() {
+
+    const res = await fetch('/api/nearby');
+    const devices = await res.json();
+
+    const container = document.getElementById('nearby-container');
+
+    if (!devices || devices.length === 0) return;
+
+    let html = '';
+
+    devices.forEach(d => {
+        html += `
+            <div class="col">
+                <div class="card p-3 shadow-sm">
+                    <h6 class="mb-1">${d.name}</h6>
+                    <small class="text-muted">${d.address}</small>
+                    <div class="mt-2">
+                        <strong>${d.rssi}</strong>
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+
+    container.innerHTML = html;
+}
+
+setInterval(updateNearby, 2000);
+updateNearby();
 
 // polling
 setInterval(updateDashboard, 2000);
