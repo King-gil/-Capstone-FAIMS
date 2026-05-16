@@ -27,8 +27,13 @@ NEARBY_DEVICES = []
 # -----------------------------
 def get_rssi(device):
     """Try all Bleak-compatible RSSI sources."""
+    
+    # 1. Try the standard property used in modern Bleak versions
+    if hasattr(device, 'rssi') and device.rssi is not None:
+        return device.rssi
+        
+    # 2. Fallback to the dictionary method for older setups
     try:
-        # Windows / BlueZ sometimes stores RSSI here
         return device.details["props"]["RSSI"]
     except Exception:
         return None
