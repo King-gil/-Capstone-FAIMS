@@ -4,7 +4,7 @@ from bleak import BleakScanner
 # Configuration: Replace these placeholder MAC/Bluetooth addresses 
 # with the actual addresses of your beacons or simulator apps.
 TARGET_ASSETS = {
-    "F99EF136-9609-4CED-BF67-8B69C8999A8C": "Asset 3 (Patient Monitor)",
+    "F99EF136-9609-4CED-BF67-8B69C8999A8C": {"name": "Asset 1 (Ventilator)", "dept": "ICU WARD A"},
     "66:77:88:99:AA:BB": "Asset 2 (Infusion Pump)",
 }
 
