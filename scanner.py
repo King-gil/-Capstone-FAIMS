@@ -4,9 +4,8 @@ from bleak import BleakScanner
 # Configuration: Replace these placeholder MAC/Bluetooth addresses 
 # with the actual addresses of your beacons or simulator apps.
 TARGET_ASSETS = {
-    "00:11:22:33:44:55": "Asset 1 (Ventilator)",
+    "F99EF136-9609-4CED-BF67-8B69C8999A8C": "Asset 3 (Patient Monitor)",
     "66:77:88:99:AA:BB": "Asset 2 (Infusion Pump)",
-    "F99EF136-9609-4CED-BF67-8B69C8999A8C": "Asset 3 (Patient Monitor)"
 }
 
 def estimate_proximity(rssi):
