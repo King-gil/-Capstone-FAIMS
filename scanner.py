@@ -1,82 +1,45 @@
 import asyncio
 from bleak import BleakScanner
 
-# Registered BLE Assets
-TARGET_ASSETS = {
-    "C216FE14-8047-4978-92C3-68919B540D4F": {
-        "name": "Ventilator",
-        "dept": "ICU WARD A"
-    },
-    "66:77:88:99:AA:BB": {
-        "name": "Infusion Pump",
-        "dept": "ER"
-    },
-}
+TARGET_UUID = "C216FE14-8047-4978-92C3-68919B540D4F".replace("-", "").lower()
 
-def estimate_proximity(rssi):
-    """Estimate proximity based on RSSI signal strength."""
-    
-    if rssi >= -60:
-        return "Immediate (< 1.5m)"
-    
-    elif -80 < rssi < -60:
-        return "Near (1.5m - 5m)"
-    
-    return "Far (> 5m)"
+async def scan():
 
+    print("Scanning for iBeacon...\n")
 
-async def run_asset_scanner():
+    devices = await BleakScanner.discover(return_adv=True)
 
-    print("=============================================")
-    print("      BLE Asset Tracking System (PoC)")
-    print("=============================================")
-    print("Press Ctrl+C to stop scanning.\n")
+    found = False
 
-    while True:
+    for address, (device, adv) in devices.items():
 
-        print("Scanning environment...\n")
+        manufacturer_data = adv.manufacturer_data
 
-        # Scan BLE devices for 4 seconds
-        devices = await BleakScanner.discover(timeout=4.0)
+        # Apple company ID = 76
+        if 76 in manufacturer_data:
 
-        print(f"Detected {len(devices)} BLE devices\n")
+            raw_bytes = manufacturer_data[76]
 
-        target_detected = False
+            hex_data = raw_bytes.hex()
 
-        for device in devices:
+            print(f"Device: {device.name}")
+            print(f"Address: {device.address}")
+            print(f"RSSI: {device.rssi}")
+            print(f"Raw Beacon Data: {hex_data}\n")
 
-            # Match scanned device against registered assets
-            if device.address in TARGET_ASSETS:
+            if TARGET_UUID in hex_data:
 
-                asset = TARGET_ASSETS[device.address]
+                print("================================")
+                print("TARGET ASSET DETECTED")
+                print("================================")
+                print(f"UUID: {TARGET_UUID}")
+                print(f"Device: {device.name}")
+                print(f"RSSI: {device.rssi}")
+                print("================================\n")
 
-                rssi = device.rssi
-                proximity = estimate_proximity(rssi)
+                found = True
 
-                print("=================================")
-                print(f"Asset Name : {asset['name']}")
-                print(f"Department : {asset['dept']}")
-                print(f"Address    : {device.address}")
-                print(f"Device Name: {device.name}")
-                print(f"RSSI       : {rssi} dBm")
-                print(f"Proximity  : {proximity}")
-                print("=================================\n")
+    if not found:
+        print("Target beacon not detected.")
 
-                target_detected = True
-
-        if not target_detected:
-            print("No registered assets detected.\n")
-
-        print("-" * 50)
-
-        # Delay before next scan cycle
-        await asyncio.sleep(2)
-
-
-if __name__ == "__main__":
-
-    try:
-        asyncio.run(run_asset_scanner())
-
-    except KeyboardInterrupt:
-        print("\n[System] Scanner terminated by user.")
+asyncio.run(scan())
