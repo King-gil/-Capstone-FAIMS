@@ -8,9 +8,9 @@ app = Flask(__name__)
 
 # iBeacon UUID registry (this is correct for simulators)
 TARGET_ASSETS = {
-    "F99EF136-9609-4CED-BF67-8B69C8999A8C": {
-        "name": "Asset 1 (Ventilator)",
-        "dept": "ICU WARD A"
+   "F99EF136-9609-4CED-BF67-8B69C8999A8C": {
+        "name": "My Custom Phone Beacon",  # <--- Change your beacon's name here
+        "dept": "MIS DEPARTMENT"           # <--- You can also change the department
     },
     "66:77:88:99:AA:BB": {
         "name": "Asset 2 (Infusion Pump)",
