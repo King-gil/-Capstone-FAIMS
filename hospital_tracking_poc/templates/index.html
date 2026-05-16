@@ -4,109 +4,186 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LCP Asset Tracking Dashboard</title>
-    <!-- Bootstrap 5 CSS -->
-    <link href="[https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css](https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css)" rel="stylesheet">
+
+    <!-- FIXED Bootstrap CDN -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
     <style>
-        body { background-color: #f4f6f9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-        .navbar { background-color: #1a365d; }
-        .card-asset { border: none; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); transition: transform 0.2s; }
-        .card-asset:hover { transform: translateY(-2px); }
+        body {
+            background-color: #f4f6f9;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
+        .navbar {
+            background-color: #1a365d;
+        }
+
+        .card-asset {
+            border: none;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            transition: transform 0.2s;
+        }
+
+        .card-asset:hover {
+            transform: translateY(-2px);
+        }
     </style>
 </head>
+
 <body>
 
-    <!-- Top Header Navigation -->
-    <nav class="navbar navbar-dark shadow-sm mb-4">
-        <div class="container">
-            <span class="navbar-brand mb-0 h1">
-                🏥 Lung Center of the Philippines — MIS Asset Tracking PoC
-            </span>
-            <span class="badge bg-light text-dark shadow-sm" id="sync-status">Syncing...</span>
-        </div>
-    </nav>
-
+<!-- HEADER -->
+<nav class="navbar navbar-dark shadow-sm mb-4">
     <div class="container">
-        <div class="row mb-3">
-            <div class="col">
-                <h3 class="fw-bold text-secondary">Real-Time Asset Inventory</h3>
-                <p class="text-muted small">Tracking live Bluetooth Low Energy (BLE) transmissions across clinical areas.</p>
-            </div>
-        </div>
+        <span class="navbar-brand mb-0 h1">
+            🏥 LCP MIS Asset Tracking PoC
+        </span>
+        <span class="badge bg-light text-dark" id="sync-status">Connecting...</span>
+    </div>
+</nav>
 
-        <!-- Real-Time Asset Cards Container -->
-        <div class="row row-cols-1 row-cols-md-2 g-4" id="asset-container">
-            <!-- JavaScript will dynamically inject asset cards here -->
-            <div class="col-12 text-center my-5">
-                <div class="spinner-border text-primary" role="status"></div>
-                <p class="mt-2 text-muted">Waiting for initial BLE environment scan...</p>
-            </div>
+<div class="container">
+
+    <div class="row mb-3">
+        <div class="col">
+            <h3 class="fw-bold text-secondary">Real-Time Asset Inventory</h3>
+            <p class="text-muted small">
+                Live BLE tracking for hospital equipment visibility
+            </p>
         </div>
     </div>
 
-    <!-- JavaScript to Poll Backend API -->
-    <script>
-        async function updateDashboard() {
-            const container = document.getElementById('asset-container');
-            const syncStatus = document.getElementById('sync-status');
+    <!-- ASSET GRID -->
+    <div class="row row-cols-1 row-cols-md-2 g-4" id="asset-container">
 
-            try {
-                const response = await fetch('/api/assets');
-                const assets = await response.json();
+        <div class="col-12 text-center my-5" id="loading-state">
+            <div class="spinner-border text-primary"></div>
+            <p class="mt-2 text-muted">Scanning BLE environment...</p>
+        </div>
 
-                // If no data has populated from the scanner thread yet
-                if (assets.length === 0) return;
+    </div>
+</div>
 
-                let htmlContent = '';
+<!-- SCRIPT -->
+<script>
 
-                assets.forEach(asset => {
-                    htmlContent += `
-                        <div class="col">
-                            <div class="card card-asset h-100 border-start border-5 border-${asset.class}">
-                                <div class="card-body">
-                                    <div class="d-flex justify-content-between align-items-start mb-3">
-                                        <div>
-                                            <h5 class="card-title fw-bold mb-1">${asset.name}</h5>
-                                            <h6 class="card-subtitle text-muted text-uppercase small">${asset.dept}</h6>
-                                        </div>
-                                        <span class="badge bg-${asset.class} px-3 py-2 fs-6 rounded-pill">
-                                            ${asset.status}
-                                        </span>
-                                    </div>
-                                    <hr class="text-muted opacity-25">
-                                    <div class="row g-2 text-center small">
-                                        <div class="col-6 bg-light py-2 rounded">
-                                            <span class="text-muted d-block text-uppercase extra-small">Signal Strength</span>
-                                            <strong class="fs-6">${asset.rssi}</strong>
-                                        </div>
-                                        <div class="col-6 bg-light py-2 rounded">
-                                            <span class="text-muted d-block text-uppercase extra-small">Proximity Context</span>
-                                            <span class="fw-semibold text-${asset.class}">${asset.desc}</span>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="card-footer bg-transparent border-0 text-end pb-3 pt-0">
-                                    <small class="text-muted">Last Scanned: ${asset.last_seen}</small>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                });
+function normalizeClass(cls) {
+    const allowed = ["success", "warning", "danger", "secondary", "primary"];
+    return allowed.includes(cls) ? cls : "secondary";
+}
 
-                container.innerHTML = htmlContent;
-                syncStatus.textContent = "Live Updates Active";
-                syncStatus.className = "badge bg-success";
+async function updateDashboard() {
 
-            } catch (error) {
-                console.error("Dashboard Sync Failure:", error);
-                syncStatus.textContent = "Connection Lost";
-                syncStatus.className = "badge bg-danger";
-            }
+    const container = document.getElementById('asset-container');
+    const syncStatus = document.getElementById('sync-status');
+
+    try {
+        const response = await fetch('/api/assets');
+        const assets = await response.json();
+
+        // Remove loading state once data arrives
+        const loader = document.getElementById('loading-state');
+        if (loader) loader.remove();
+
+        if (!assets || assets.length === 0) {
+            container.innerHTML = `
+                <div class="col-12 text-center text-muted my-5">
+                    No BLE assets detected in range.
+                </div>
+            `;
+            syncStatus.textContent = "Idle";
+            syncStatus.className = "badge bg-warning text-dark";
+            return;
         }
 
-        // Poll the backend endpoint every 2000 milliseconds (2 seconds)
-        setInterval(updateDashboard, 2000);
-        // Trigger initial execution immediately on page render
-        updateDashboard();
-    </script>
+        let html = '';
+
+        assets.forEach(asset => {
+
+            const cls = normalizeClass(asset.class);
+
+            html += `
+                <div class="col">
+                    <div class="card card-asset h-100 border-start border-5 border-${cls}">
+
+                        <div class="card-body">
+
+                            <div class="d-flex justify-content-between align-items-start mb-3">
+
+                                <div>
+                                    <h5 class="card-title fw-bold mb-1">${asset.name}</h5>
+                                    <h6 class="card-subtitle text-muted text-uppercase small">
+                                        ${asset.dept}
+                                    </h6>
+                                </div>
+
+                                <span class="badge bg-${cls} px-3 py-2 rounded-pill">
+                                    ${asset.status}
+                                </span>
+
+                            </div>
+
+                            <hr class="opacity-25">
+
+                            <div class="row g-2 text-center small">
+
+                                <div class="col-6 bg-light py-2 rounded">
+                                    <span class="text-muted d-block text-uppercase small">
+                                        Signal
+                                    </span>
+                                    <strong>${asset.rssi}</strong>
+                                </div>
+
+                                <div class="col-6 bg-light py-2 rounded">
+                                    <span class="text-muted d-block text-uppercase small">
+                                        Proximity
+                                    </span>
+                                    <span class="fw-semibold text-${cls}">
+                                        ${asset.desc}
+                                    </span>
+                                </div>
+
+                            </div>
+
+                        </div>
+
+                        <div class="card-footer bg-transparent border-0 text-end">
+                            <small class="text-muted">
+                                Last Scan: ${asset.last_seen}
+                            </small>
+                        </div>
+
+                    </div>
+                </div>
+            `;
+        });
+
+        container.innerHTML = html;
+
+        syncStatus.textContent = "Live";
+        syncStatus.className = "badge bg-success";
+
+    } catch (err) {
+
+        console.error(err);
+
+        syncStatus.textContent = "Disconnected";
+        syncStatus.className = "badge bg-danger";
+
+        document.getElementById('asset-container').innerHTML = `
+            <div class="col-12 text-center text-danger my-5">
+                Backend connection failed. Is Flask running?
+            </div>
+        `;
+    }
+}
+
+// polling
+setInterval(updateDashboard, 2000);
+updateDashboard();
+
+</script>
+
 </body>
 </html>
