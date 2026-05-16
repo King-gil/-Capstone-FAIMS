@@ -8,7 +8,7 @@ app = Flask(__name__)
 
 # Configuration: Replace with your actual beacon/phone MAC addresses
 TARGET_ASSETS = {
-    "00:11:22:33:44:55": {"name": "Asset 1 (Ventilator)", "dept": "ICU WARD A"},
+    "F99EF136-9609-4CED-BF67-8B69C8999A8C": {"name": "Asset 1 (Ventilator)", "dept": "ICU WARD A"},
     "66:77:88:99:AA:BB": {"name": "Asset 2 (Infusion Pump)", "dept": "EMERGENCY ROOM"}
 }
 
