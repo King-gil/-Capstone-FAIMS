@@ -55,14 +55,16 @@ async def ble_scanner_loop():
             # Process detected BLE advertisements
             for address, (device, adv) in devices.items():
 
+                rssi = adv.rssi  # ✅ correct location
+
                 manufacturer_data = adv.manufacturer_data
 
-                # Apple manufacturer ID for iBeacon
                 if 76 in manufacturer_data:
 
                     raw_bytes = manufacturer_data[76]
-
                     hex_data = raw_bytes.hex().lower()
+
+                    print(device.address, device.name, rssi)
 
                     # Remove dashes from UUID registry
                     for uuid, info in TARGET_ASSETS.items():
