@@ -4,19 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LCP Asset Tracking Dashboard</title>
-
-    <!-- FIXED Bootstrap CDN -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-
     <style>
         body {
             background-color: #f4f6f9;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         }
-
-        .navbar {
-            background-color: #1a365d;
-        }
+        .navbar { background-color: #1a365d; }
 
         .card-asset {
             border: none;
@@ -24,9 +18,25 @@
             box-shadow: 0 4px 6px rgba(0,0,0,0.05);
             transition: transform 0.2s;
         }
+        .card-asset:hover { transform: translateY(-2px); }
 
-        .card-asset:hover {
-            transform: translateY(-2px);
+        .card-nearby {
+            border: none;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.06);
+            font-size: 0.85rem;
+        }
+        .rssi-bar {
+            height: 6px;
+            border-radius: 3px;
+            background: #e9ecef;
+            margin-top: 6px;
+            overflow: hidden;
+        }
+        .rssi-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.4s ease;
         }
     </style>
 </head>
@@ -36,60 +46,79 @@
 <!-- HEADER -->
 <nav class="navbar navbar-dark shadow-sm mb-4">
     <div class="container">
-        <span class="navbar-brand mb-0 h1">
-            🏥 LCP MIS Asset Tracking PoC
-        </span>
-        <span class="badge bg-light text-dark" id="sync-status">Connecting...</span>
+        <span class="navbar-brand mb-0 h1">🏥 LCP MIS Asset Tracking PoC</span>
+        <div class="d-flex align-items-center gap-2">
+            <span class="text-white-50 small" id="last-updated"></span>
+            <span class="badge bg-light text-dark" id="sync-status">Connecting...</span>
+        </div>
     </div>
 </nav>
 
-<div class="container">
+<!-- MAIN CONTAINER — everything lives inside here -->
+<div class="container pb-5">
 
-    <div class="row mb-3">
+    <!-- Section: Tracked Assets -->
+    <div class="row mb-2">
         <div class="col">
-            <h3 class="fw-bold text-secondary">Real-Time Asset Inventory</h3>
-            <p class="text-muted small">
-                Live BLE tracking for hospital equipment visibility
-            </p>
+            <h5 class="fw-bold text-secondary mb-0">📡 Tracked Assets</h5>
+            <p class="text-muted small mb-3">Live BLE tracking for hospital equipment visibility</p>
         </div>
     </div>
 
-    <!-- ASSET GRID -->
-    <div class="row row-cols-1 row-cols-md-2 g-4" id="asset-container">
-
+    <div class="row row-cols-1 row-cols-md-2 g-4 mb-5" id="asset-container">
         <div class="col-12 text-center my-5" id="loading-state">
             <div class="spinner-border text-primary"></div>
             <p class="mt-2 text-muted">Scanning BLE environment...</p>
         </div>
-
     </div>
-</div>
 
-<div class="row mt-5">
-    <div class="col">
-        <h5 class="text-secondary">Nearby BLE Devices (Including Phones)</h5>
-        <div id="nearby-container" class="row row-cols-1 row-cols-md-3 g-3"></div>
+    <!-- Section: Nearby BLE Devices -->
+    <hr class="opacity-25">
+    <div class="row mt-4 mb-2">
+        <div class="col">
+            <h5 class="fw-bold text-secondary mb-0">🔵 Nearby BLE Devices</h5>
+            <p class="text-muted small mb-3">All devices visible in the BLE environment (diagnostic view)</p>
+        </div>
     </div>
-</div>
 
-<!-- SCRIPT -->
+    <div class="row row-cols-1 row-cols-md-3 g-3" id="nearby-container">
+        <div class="col-12 text-muted small">Scanning...</div>
+    </div>
+
+</div><!-- /container -->
+
 <script>
+// Map RSSI to a 0–100 bar width
+function rssiToPercent(rssiStr) {
+    const val = parseInt(rssiStr);
+    if (isNaN(val)) return 0;
+    // -40 dBm = 100%, -100 dBm = 0%
+    return Math.max(0, Math.min(100, ((val + 100) / 60) * 100));
+}
+
+function rssiColor(rssiStr) {
+    const val = parseInt(rssiStr);
+    if (isNaN(val)) return "#adb5bd";
+    if (val >= -60) return "#198754";
+    if (val >= -80) return "#ffc107";
+    return "#dc3545";
+}
 
 function normalizeClass(cls) {
     const allowed = ["success", "warning", "danger", "secondary", "primary"];
     return allowed.includes(cls) ? cls : "secondary";
 }
 
+// ---- TRACKED ASSETS ----
 async function updateDashboard() {
-
-    const container = document.getElementById('asset-container');
+    const container  = document.getElementById('asset-container');
     const syncStatus = document.getElementById('sync-status');
+    const lastUpd    = document.getElementById('last-updated');
 
     try {
-        const response = await fetch('/api/assets');
-        const assets = await response.json();
+        const res    = await fetch('/api/assets');
+        const assets = await res.json();
 
-        // Remove loading state once data arrives
         const loader = document.getElementById('loading-state');
         if (loader) loader.remove();
 
@@ -97,130 +126,120 @@ async function updateDashboard() {
             container.innerHTML = `
                 <div class="col-12 text-center text-muted my-5">
                     No BLE assets detected in range.
-                </div>
-            `;
-            syncStatus.textContent = "Idle";
-            syncStatus.className = "badge bg-warning text-dark";
+                </div>`;
+            syncStatus.textContent  = "Idle";
+            syncStatus.className    = "badge bg-warning text-dark";
             return;
         }
 
         let html = '';
-
         assets.forEach(asset => {
-
-            const cls = normalizeClass(asset.class);
+            const cls     = normalizeClass(asset.class);
+            const pct     = rssiToPercent(asset.rssi);
+            const barClr  = rssiColor(asset.rssi);
 
             html += `
-                <div class="col">
-                    <div class="card card-asset h-100 border-start border-5 border-${cls}">
+            <div class="col">
+              <div class="card card-asset h-100 border-start border-5 border-${cls}">
+                <div class="card-body">
 
-                        <div class="card-body">
-
-                            <div class="d-flex justify-content-between align-items-start mb-3">
-
-                                <div>
-                                    <h5 class="card-title fw-bold mb-1">${asset.name}</h5>
-                                    <h6 class="card-subtitle text-muted text-uppercase small">
-                                        ${asset.dept}
-                                    </h6>
-                                </div>
-
-                                <span class="badge bg-${cls} px-3 py-2 rounded-pill">
-                                    ${asset.status}
-                                </span>
-
-                            </div>
-
-                            <hr class="opacity-25">
-
-                            <div class="row g-2 text-center small">
-
-                                <div class="col-6 bg-light py-2 rounded">
-                                    <span class="text-muted d-block text-uppercase small">
-                                        Signal
-                                    </span>
-                                    <strong>${asset.rssi}</strong>
-                                </div>
-
-                                <div class="col-6 bg-light py-2 rounded">
-                                    <span class="text-muted d-block text-uppercase small">
-                                        Proximity
-                                    </span>
-                                    <span class="fw-semibold text-${cls}">
-                                        ${asset.desc}
-                                    </span>
-                                </div>
-
-                            </div>
-
-                        </div>
-
-                        <div class="card-footer bg-transparent border-0 text-end">
-                            <small class="text-muted">
-                                Last Scan: ${asset.last_seen}
-                            </small>
-                        </div>
-
+                  <div class="d-flex justify-content-between align-items-start mb-3">
+                    <div>
+                      <h5 class="card-title fw-bold mb-1">${asset.name}</h5>
+                      <h6 class="card-subtitle text-muted text-uppercase small">${asset.dept}</h6>
                     </div>
+                    <span class="badge bg-${cls} px-3 py-2 rounded-pill">${asset.status}</span>
+                  </div>
+
+                  <hr class="opacity-25">
+
+                  <div class="row g-2 text-center small">
+                    <div class="col-6 bg-light py-2 rounded">
+                      <span class="text-muted d-block text-uppercase small">Signal</span>
+                      <strong>${asset.rssi}</strong>
+                      <div class="rssi-bar">
+                        <div class="rssi-fill" style="width:${pct}%; background:${barClr};"></div>
+                      </div>
+                    </div>
+                    <div class="col-6 bg-light py-2 rounded">
+                      <span class="text-muted d-block text-uppercase small">Proximity</span>
+                      <span class="fw-semibold text-${cls}">${asset.desc}</span>
+                    </div>
+                  </div>
+
                 </div>
-            `;
+                <div class="card-footer bg-transparent border-0 text-end">
+                  <small class="text-muted">Last Scan: ${asset.last_seen}</small>
+                </div>
+              </div>
+            </div>`;
         });
 
         container.innerHTML = html;
-
-        syncStatus.textContent = "Live";
-        syncStatus.className = "badge bg-success";
+        syncStatus.textContent  = "Live ✓";
+        syncStatus.className    = "badge bg-success";
+        lastUpd.textContent     = new Date().toLocaleTimeString();
 
     } catch (err) {
-
         console.error(err);
-
         syncStatus.textContent = "Disconnected";
-        syncStatus.className = "badge bg-danger";
-
-        document.getElementById('asset-container').innerHTML = `
+        syncStatus.className   = "badge bg-danger";
+        container.innerHTML    = `
             <div class="col-12 text-center text-danger my-5">
                 Backend connection failed. Is Flask running?
-            </div>
-        `;
+            </div>`;
     }
 }
+
+// ---- NEARBY DEVICES ----
 async function updateNearby() {
+    try {
+        const res     = await fetch('/api/nearby');
+        const devices = await res.json();
+        const cont    = document.getElementById('nearby-container');
 
-    const res = await fetch('/api/nearby');
-    const devices = await res.json();
+        if (!devices || devices.length === 0) {
+            cont.innerHTML = `<div class="col-12 text-muted small">No devices visible.</div>`;
+            return;
+        }
 
-    const container = document.getElementById('nearby-container');
+        // Sort strongest signal first
+        devices.sort((a, b) => {
+            const ra = parseInt(a.rssi) || -999;
+            const rb = parseInt(b.rssi) || -999;
+            return rb - ra;
+        });
 
-    if (!devices || devices.length === 0) return;
-
-    let html = '';
-
-    devices.forEach(d => {
-        html += `
+        let html = '';
+        devices.forEach(d => {
+            const pct  = rssiToPercent(d.rssi);
+            const clr  = rssiColor(d.rssi);
+            html += `
             <div class="col">
-                <div class="card p-3 shadow-sm">
-                    <h6 class="mb-1">${d.name}</h6>
-                    <small class="text-muted">${d.address}</small>
-                    <div class="mt-2">
-                        <strong>${d.rssi}</strong>
-                    </div>
+              <div class="card card-nearby p-3">
+                <div class="d-flex justify-content-between align-items-center">
+                  <div class="fw-semibold text-truncate" style="max-width:70%">${d.name}</div>
+                  <span class="text-muted small">${d.rssi}</span>
                 </div>
-            </div>
-        `;
-    });
+                <div class="text-muted small mt-1 text-truncate">${d.address}</div>
+                <div class="rssi-bar mt-2">
+                  <div class="rssi-fill" style="width:${pct}%; background:${clr};"></div>
+                </div>
+              </div>
+            </div>`;
+        });
 
-    container.innerHTML = html;
+        cont.innerHTML = html;
+    } catch (err) {
+        console.error("Nearby fetch error:", err);
+    }
 }
 
-setInterval(updateNearby, 2000);
-updateNearby();
-
-// polling
+// Poll every 2 seconds
 setInterval(updateDashboard, 2000);
+setInterval(updateNearby,    2000);
 updateDashboard();
-
+updateNearby();
 </script>
-
 </body>
 </html>
