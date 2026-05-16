@@ -6,23 +6,76 @@ from bleak import BleakScanner
 
 app = Flask(__name__)
 
-# Configuration: Replace with your actual beacon/phone MAC addresses
+# iBeacon UUID registry (this is correct for simulators)
 TARGET_ASSETS = {
-    "C216FE14-8047-4978-92C3-68919B540D4F".replace("-", "").lower(): {"name": "Asset 1 (Ventilator)", "dept": "ICU WARD A"},
-    "66:77:88:99:AA:BB": {"name": "Asset 2 (Infusion Pump)", "dept": "EMERGENCY ROOM"}
+    "F99EF136-9609-4CED-BF67-8B69C8999A8C": {
+        "name": "Asset 1 (Ventilator)",
+        "dept": "ICU WARD A"
+    },
+    "66:77:88:99:AA:BB": {
+        "name": "Asset 2 (Infusion Pump)",
+        "dept": "EMERGENCY ROOM"
+    }
 }
 
-# Shared memory storage for the latest scanned values
 LATEST_DATA = {}
 
-def estimate_proximity(rssi):
-    if rssi >= -60:
-        return {"status": "Immediate", "class": "success", "desc": "< 1.5m (Very Close)"}
-    elif -80 < rssi < -60:
-        return {"status": "Near", "class": "warning", "desc": "1.5m - 5m (Same Room)"}
-    else:
-        return {"status": "Far", "class": "danger", "desc": "> 5m (Edge / Displaced)"}
 
+# -----------------------------
+# RSSI SAFE EXTRACTION
+# -----------------------------
+def get_rssi(device):
+    """Try all Bleak-compatible RSSI sources."""
+    try:
+        # Windows / BlueZ sometimes stores RSSI here
+        return device.details["props"]["RSSI"]
+    except Exception:
+        return None
+
+
+# -----------------------------
+# iBeacon UUID PARSER
+# -----------------------------
+def parse_ibeacon_uuid(hex_data):
+    """
+    Extract UUID from iBeacon manufacturer payload.
+    """
+    try:
+        # iBeacon structure:
+        # 02 15 + UUID (16 bytes)
+        if "0215" in hex_data:
+            uuid_hex = hex_data.split("0215")[1][0:32]
+            return (
+                uuid_hex[0:8] + "-" +
+                uuid_hex[8:12] + "-" +
+                uuid_hex[12:16] + "-" +
+                uuid_hex[16:20] + "-" +
+                uuid_hex[20:]
+            ).upper()
+    except:
+        pass
+
+    return None
+
+
+# -----------------------------
+# PROXIMITY MODEL
+# -----------------------------
+def estimate_proximity(rssi):
+    if rssi is None:
+        return {"status": "Unknown", "class": "secondary", "desc": "No Signal Data"}
+
+    if rssi >= -60:
+        return {"status": "Immediate", "class": "success", "desc": "< 1.5m"}
+    elif -80 < rssi < -60:
+        return {"status": "Near", "class": "warning", "desc": "1.5m - 5m"}
+    else:
+        return {"status": "Far", "class": "danger", "desc": "> 5m"}
+
+
+# -----------------------------
+# BLE SCANNER LOOP
+# -----------------------------
 async def ble_scanner_loop():
 
     global LATEST_DATA
@@ -30,93 +83,91 @@ async def ble_scanner_loop():
     while True:
 
         try:
-
-            # IMPORTANT
-            devices = await BleakScanner.discover(
-                timeout=3.0,
-                return_adv=True
-            )
+            devices = await BleakScanner.discover(timeout=3.0)
 
             current_scan = {}
 
-            # Initialize all assets as offline
+            # initialize all assets as offline
             for uuid, info in TARGET_ASSETS.items():
-
                 current_scan[uuid] = {
                     "name": info["name"],
                     "dept": info["dept"],
                     "rssi": "N/A",
                     "status": "Offline",
                     "class": "secondary",
-                    "desc": "Not Detected / Missing",
+                    "desc": "Not Detected",
                     "last_seen": "-"
                 }
 
-            # Process detected BLE advertisements
-            for address, (device, adv) in devices.items():
+            for device in devices:
 
-                rssi = adv.rssi  # ✅ correct location
+                rssi = get_rssi(device)
 
-                manufacturer_data = adv.manufacturer_data
+                # manufacturer data access (iBeacon)
+                md = getattr(device, "metadata", {}).get("manufacturer_data", {})
 
-                if 76 in manufacturer_data:
+                for company_id, data in md.items():
 
-                    raw_bytes = manufacturer_data[76]
-                    hex_data = raw_bytes.hex().lower()
+                    hex_data = data.hex().lower()
+                    parsed_uuid = parse_ibeacon_uuid(hex_data)
 
-                    print(device.address, device.name, rssi)
+                    if parsed_uuid:
 
-                    # Remove dashes from UUID registry
-                    for uuid, info in TARGET_ASSETS.items():
+                        parsed_uuid = parsed_uuid.upper()
 
-                        formatted_uuid = uuid.replace("-", "").lower()
+                        if parsed_uuid in TARGET_ASSETS:
 
-                        if formatted_uuid in hex_data:
+                            prox = estimate_proximity(rssi)
 
-                            prox = estimate_proximity(device.rssi)
-
-                            current_scan[uuid].update({
-                                "rssi": f"{device.rssi} dBm",
+                            current_scan[parsed_uuid].update({
+                                "rssi": f"{rssi} dBm" if rssi else "N/A",
                                 "status": prox["status"],
                                 "class": prox["class"],
                                 "desc": prox["desc"],
                                 "last_seen": time.strftime("%H:%M:%S")
                             })
 
-                            print(f"Detected: {info['name']}")
-                            print(f"UUID: {uuid}")
-                            print(f"RSSI: {device.rssi}")
-                            print("--------------------------------")
+                            print(f"Detected: {TARGET_ASSETS[parsed_uuid]['name']}")
+                            print(f"UUID: {parsed_uuid}")
+                            print(f"RSSI: {rssi}")
+                            print("---------------------------")
 
             LATEST_DATA = current_scan
 
         except Exception as e:
-
-            print(f"Scanner Error: {e}")
+            print("Scanner Error:", e)
 
         await asyncio.sleep(1)
-        
+
+
+# -----------------------------
+# THREAD WRAPPER
+# -----------------------------
 def start_ble_loop():
-    """Helper to run the async BLE loop inside a dedicated background thread."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(ble_scanner_loop())
 
-# --- FLASK WEB ROUTES ---
 
-@app.route('/')
+# -----------------------------
+# FLASK ROUTES
+# -----------------------------
+@app.route("/")
 def index():
-    return render_template('index.html')
+    return render_template("index.html")
 
-@app.route('/api/assets')
+
+@app.route("/api/assets")
 def get_assets():
-    """API endpoint that the frontend calls to get real-time tracking data."""
     return jsonify(list(LATEST_DATA.values()))
 
+
+# -----------------------------
+# MAIN
+# -----------------------------
 if __name__ == "__main__":
-    # Start the BLE scanner thread before spinning up the Flask app
+
     scanner_thread = threading.Thread(target=start_ble_loop, daemon=True)
     scanner_thread.start()
-    
-    # Launch the web application
+
     app.run(debug=True, port=5000)
