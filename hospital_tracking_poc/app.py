@@ -6,11 +6,12 @@ from bleak import BleakScanner
 
 app = Flask(__name__)
 
-# iBeacon UUID registry (this is correct for simulators)
+# iBeacon UUID registry
 TARGET_ASSETS = {
-   "F99EF136-9609-4CED-BF67-8B69C8999A8C": {
-        "name": "My Custom Phone Beacon",  # <--- Change your beacon's name here
-        "dept": "MIS DEPARTMENT"           # <--- You can also change the department
+    # Replace the old ventilator UUID with your phone's exact UUID
+    "C216FE14-8047-4978-92C3-68919B540D4F": {
+        "name": "My Custom Phone Beacon",
+        "dept": "MIS DEPARTMENT"
     },
     "66:77:88:99:AA:BB": {
         "name": "Asset 2 (Infusion Pump)",
