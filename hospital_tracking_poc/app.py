@@ -80,7 +80,7 @@ def estimate_proximity(rssi):
         return {"status": "Far", "class": "danger", "desc": "> 5m"}
 
 
-# -----------------------------
+
 # BLE SCANNER LOOP
 # -----------------------------
 # -----------------------------
@@ -88,8 +88,11 @@ def estimate_proximity(rssi):
 # -----------------------------
 async def ble_scanner_loop():
 
-    # 1. ADD NEARBY_DEVICES HERE SO FLASK CAN READ IT
     global LATEST_DATA, NEARBY_DEVICES 
+
+    # Your phone's UUID (lowercase, without dashes) for raw hex searching
+    target_uuid_raw = "c216fe148047497892c368919b540d4f"
+    target_uuid_formatted = "C216FE14-8047-4978-92C3-68919B540D4F"
 
     while True:
 
@@ -99,7 +102,7 @@ async def ble_scanner_loop():
             NEARBY_DEVICES = []
             current_scan = {}
 
-            # initialize all assets as offline
+            # Initialize all assets as offline
             for uuid, info in TARGET_ASSETS.items():
                 current_scan[uuid] = {
                     "name": info["name"],
@@ -113,45 +116,45 @@ async def ble_scanner_loop():
 
             for device in devices:
 
-                rssi = get_rssi(device)
+                # --- 1. ULTIMATE RSSI EXTRACTION ---
+                rssi = getattr(device, 'rssi', None)
+                if rssi is None or rssi == 0:
+                    try:
+                        # Deep Windows fallback
+                        rssi = device.details["props"]["RSSI"]
+                    except:
+                        rssi = None
 
-                # 2. ADD YOUR NEW CODE RIGHT HERE
+                # --- 2. POPULATE NEARBY DEVICES ---
                 name = device.name or "Unknown Device"
                 NEARBY_DEVICES.append({
                     "name": name,
                     "address": device.address,
                     "rssi": f"{rssi} dBm" if rssi else "N/A"
                 })
-                # ----------------------------------------
 
-                # manufacturer data access (iBeacon)
+                # --- 3. BRUTE FORCE IBEACON SEARCH ---
                 md = getattr(device, "metadata", {}).get("manufacturer_data", {})
 
                 for company_id, data in md.items():
-
                     hex_data = data.hex().lower()
-                    parsed_uuid = parse_ibeacon_uuid(hex_data)
+                    
+                    # If your UUID exists literally anywhere in the raw data payload
+                    if target_uuid_raw in hex_data:
+                        
+                        prox = estimate_proximity(rssi)
 
-                    if parsed_uuid:
+                        current_scan[target_uuid_formatted].update({
+                            "rssi": f"{rssi} dBm" if rssi else "N/A",
+                            "status": prox["status"],
+                            "class": prox["class"],
+                            "desc": prox["desc"],
+                            "last_seen": time.strftime("%H:%M:%S")
+                        })
 
-                        parsed_uuid = parsed_uuid.upper()
-
-                        if parsed_uuid in TARGET_ASSETS:
-
-                            prox = estimate_proximity(rssi)
-
-                            current_scan[parsed_uuid].update({
-                                "rssi": f"{rssi} dBm" if rssi else "N/A",
-                                "status": prox["status"],
-                                "class": prox["class"],
-                                "desc": prox["desc"],
-                                "last_seen": time.strftime("%H:%M:%S")
-                            })
-
-                            print(f"Detected: {TARGET_ASSETS[parsed_uuid]['name']}")
-                            print(f"UUID: {parsed_uuid}")
-                            print(f"RSSI: {rssi}")
-                            print("---------------------------")
+                        print(f"✅ SUCCESS: Detected Custom Phone Beacon!")
+                        print(f"RSSI: {rssi}")
+                        print("---------------------------")
 
             LATEST_DATA = current_scan
 
