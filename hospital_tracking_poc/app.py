@@ -8,11 +8,10 @@ app = Flask(__name__)
 
 # ---------------------------------------------------------------
 # ASSET REGISTRY
-# Each asset can match by:
-#   - "ibeacon_uuid" : UUID found in iBeacon manufacturer payload
-#   - "address"      : BLE MAC address (case-insensitive)
-#   - "name"         : Advertised device name (substring match)
-# You can set multiple match keys per asset for redundancy.
+# Match strategies (set as many as you want per asset):
+#   "ibeacon_uuid" : UUID found in iBeacon manufacturer payload
+#   "address"      : BLE MAC address (case-insensitive)
+#   "name"         : Advertised device name (substring, case-insensitive)
 # ---------------------------------------------------------------
 TARGET_ASSETS = {
     "asset_phone": {
@@ -26,8 +25,7 @@ TARGET_ASSETS = {
         "name": "Asset 2 (Infusion Pump)",
         "dept": "EMERGENCY ROOM",
         "match": {
-            "address": "66:77:88:99:AA:BB",   # MAC address match
-            # "name": "InfusionPump"           # uncomment as fallback
+            "address": "66:77:88:99:AA:BB",
         }
     }
 }
@@ -37,35 +35,26 @@ NEARBY_DEVICES = []
 
 
 # -----------------------------
-# RSSI SAFE EXTRACTION
-# -----------------------------
-def get_rssi(device):
-    """Try all Bleak-compatible RSSI sources."""
-    if hasattr(device, 'rssi') and device.rssi is not None:
-        return device.rssi
-    try:
-        return device.details["props"]["RSSI"]
-    except Exception:
-        return None
-
-
-# -----------------------------
 # iBeacon UUID PARSER
 # -----------------------------
-def parse_ibeacon_uuid(hex_data: str):
-    """Extract UUID from iBeacon manufacturer payload (02 15 prefix)."""
+def parse_ibeacon_uuid(data: bytes):
+    """
+    Extract UUID from raw iBeacon manufacturer payload.
+    iBeacon: 02 15 <16-byte UUID> <major 2b> <minor 2b> <tx power 1b>
+    """
     try:
-        if "0215" in hex_data:
-            uuid_hex = hex_data.split("0215")[1][0:32]
-            if len(uuid_hex) < 32:
-                return None
-            return (
-                uuid_hex[0:8] + "-" +
-                uuid_hex[8:12] + "-" +
-                uuid_hex[12:16] + "-" +
-                uuid_hex[16:20] + "-" +
-                uuid_hex[20:]
-            ).upper()
+        hex_data = data.hex().lower()
+        idx = hex_data.find("0215")
+        if idx != -1:
+            uuid_hex = hex_data[idx + 4: idx + 4 + 32]
+            if len(uuid_hex) == 32:
+                return (
+                    uuid_hex[0:8]   + "-" +
+                    uuid_hex[8:12]  + "-" +
+                    uuid_hex[12:16] + "-" +
+                    uuid_hex[16:20] + "-" +
+                    uuid_hex[20:]
+                ).upper()
     except Exception:
         pass
     return None
@@ -76,76 +65,80 @@ def parse_ibeacon_uuid(hex_data: str):
 # -----------------------------
 def estimate_proximity(rssi):
     if rssi is None:
-        return {"status": "Unknown", "class": "secondary", "desc": "No Signal Data"}
+        return {"status": "Unknown",   "class": "secondary", "desc": "No Signal Data"}
     if rssi >= -60:
-        return {"status": "Immediate", "class": "success", "desc": "< 1.5m"}
+        return {"status": "Immediate", "class": "success",   "desc": "< 1.5m"}
     elif rssi >= -80:
-        return {"status": "Near", "class": "warning", "desc": "1.5m – 5m"}
+        return {"status": "Near",      "class": "warning",   "desc": "1.5m – 5m"}
     else:
-        return {"status": "Far", "class": "danger", "desc": "> 5m"}
+        return {"status": "Far",       "class": "danger",    "desc": "> 5m"}
 
 
 # -----------------------------
 # ASSET MATCHER
-# Returns asset_id if the device matches any rule, else None.
 # -----------------------------
-def match_device_to_asset(device, rssi):
-    device_address = (device.address or "").upper()
-    device_name    = (device.name or "").lower()
+def match_device(device, adv):
+    """Return asset_id if the device matches any registered rule, else None."""
+    address  = (device.address or "").upper()
+    adv_name = (adv.local_name or device.name or "").lower()
+    mfr_data = adv.manufacturer_data or {}
 
-    # Extract iBeacon UUID from manufacturer data
-    md = getattr(device, "metadata", {}).get("manufacturer_data", {})
+    # Parse iBeacon UUID from all manufacturer payloads
     detected_uuid = None
-    for company_id, data in md.items():
-        hex_data = data.hex().lower()
-        detected_uuid = parse_ibeacon_uuid(hex_data)
-        if detected_uuid:
+    for payload in mfr_data.values():
+        u = parse_ibeacon_uuid(payload)
+        if u:
+            detected_uuid = u
             break
+
+    # Flat hex string for raw substring fallback
+    all_hex = "".join(v.hex() for v in mfr_data.values()).lower()
 
     for asset_id, asset in TARGET_ASSETS.items():
         rules = asset.get("match", {})
 
-        # Rule 1: iBeacon UUID
-        if "ibeacon_uuid" in rules and detected_uuid:
-            if detected_uuid.upper() == rules["ibeacon_uuid"].upper():
-                return asset_id
-
-        # Rule 1b: raw UUID substring search (belt-and-suspenders)
         if "ibeacon_uuid" in rules:
-            target_raw = rules["ibeacon_uuid"].replace("-", "").lower()
-            for company_id, data in md.items():
-                if target_raw in data.hex().lower():
-                    return asset_id
-
-        # Rule 2: MAC address
-        if "address" in rules:
-            if device_address == rules["address"].upper():
+            target     = rules["ibeacon_uuid"].upper()
+            target_raw = target.replace("-", "").lower()
+            if detected_uuid and detected_uuid == target:
+                return asset_id
+            if target_raw in all_hex:          # raw hex fallback
                 return asset_id
 
-        # Rule 3: advertised name (substring)
+        if "address" in rules:
+            if address == rules["address"].upper():
+                return asset_id
+
         if "name" in rules:
-            if rules["name"].lower() in device_name:
+            if rules["name"].lower() in adv_name:
                 return asset_id
 
     return None
 
 
-# -----------------------------
+# ---------------------------------------------------------------
 # BLE SCANNER LOOP
-# -----------------------------
+#
+# THE KEY FIX: return_adv=True
+#   Without it, BleakScanner.discover() returns BLEDevice objects
+#   that do NOT reliably carry RSSI or manufacturer_data on Windows.
+#   With return_adv=True it returns:
+#       { address: (BLEDevice, AdvertisementData) }
+#   AdvertisementData has .rssi, .manufacturer_data, .local_name, etc.
+# ---------------------------------------------------------------
 async def ble_scanner_loop():
     global LATEST_DATA, NEARBY_DEVICES
 
     while True:
         try:
-            devices = await BleakScanner.discover(timeout=3.0)
+            results = await BleakScanner.discover(timeout=3.0, return_adv=True)
 
-            NEARBY_DEVICES = []
-            current_scan = {}
+            nearby   = []
+            scan_out = {}
 
             # Initialise all assets as offline
             for asset_id, info in TARGET_ASSETS.items():
-                current_scan[asset_id] = {
+                scan_out[asset_id] = {
                     "name":      info["name"],
                     "dept":      info["dept"],
                     "rssi":      "N/A",
@@ -155,35 +148,47 @@ async def ble_scanner_loop():
                     "last_seen": "-"
                 }
 
-            for device in devices:
-                rssi = get_rssi(device)
-                display_name = device.name or "Unknown Device"
+            print(f"\n--- Scan: {len(results)} device(s) found ---")
 
-                # Populate nearby-devices list (all BLE, for diagnostics)
-                NEARBY_DEVICES.append({
-                    "name":    display_name,
+            for address, (device, adv) in results.items():
+                rssi = adv.rssi
+                name = adv.local_name or device.name or "Unknown Device"
+
+                nearby.append({
+                    "name":    name,
                     "address": device.address,
                     "rssi":    f"{rssi} dBm" if rssi is not None else "N/A"
                 })
 
-                # Try to match this device to a tracked asset
-                asset_id = match_device_to_asset(device, rssi)
+                # Print every device so you can verify your phone appears
+                mfr_keys = list(adv.manufacturer_data.keys())
+                print(f"  [{device.address}] {name:<30} RSSI: {rssi:>5}  MFR: {mfr_keys}")
+
+                asset_id = match_device(device, adv)
                 if asset_id:
                     prox = estimate_proximity(rssi)
-                    current_scan[asset_id].update({
+                    scan_out[asset_id].update({
                         "rssi":      f"{rssi} dBm" if rssi is not None else "N/A",
                         "status":    prox["status"],
                         "class":     prox["class"],
                         "desc":      prox["desc"],
                         "last_seen": time.strftime("%H:%M:%S")
                     })
-                    print(f"✅ Matched: {TARGET_ASSETS[asset_id]['name']} | "
-                          f"RSSI: {rssi} dBm | Proximity: {prox['status']}")
+                    print(f"  ✅ MATCHED → {TARGET_ASSETS[asset_id]['name']} | "
+                          f"RSSI: {rssi} | {prox['status']}")
 
-            LATEST_DATA = current_scan
+            # Sort nearest first
+            def rssi_sort_key(d):
+                try:
+                    return int(d["rssi"].split()[0])
+                except Exception:
+                    return -999
+
+            NEARBY_DEVICES = sorted(nearby, key=rssi_sort_key, reverse=True)
+            LATEST_DATA    = scan_out
 
         except Exception as e:
-            print("Scanner Error:", e)
+            print(f"Scanner Error: {e}")
 
         await asyncio.sleep(1)
 
@@ -204,11 +209,9 @@ def start_ble_loop():
 def index():
     return render_template("index.html")
 
-
 @app.route("/api/assets")
 def get_assets():
     return jsonify(list(LATEST_DATA.values()))
-
 
 @app.route("/api/nearby")
 def nearby():
