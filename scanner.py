@@ -1,61 +1,82 @@
 import asyncio
 from bleak import BleakScanner
 
-# Configuration: Replace these placeholder MAC/Bluetooth addresses 
-# with the actual addresses of your beacons or simulator apps.
+# Registered BLE Assets
 TARGET_ASSETS = {
-    "F99EF136-9609-4CED-BF67-8B69C8999A8C": {"name": "Asset 1 (Ventilator)", "dept": "ICU WARD A"},
-    "66:77:88:99:AA:BB": "Asset 2 (Infusion Pump)",
+    "C216FE14-8047-4978-92C3-68919B540D4F": {
+        "name": "Ventilator",
+        "dept": "ICU WARD A"
+    },
+    "66:77:88:99:AA:BB": {
+        "name": "Infusion Pump",
+        "dept": "ER"
+    },
 }
 
 def estimate_proximity(rssi):
-    """Provides a rough human-readable distance category based on RSSI."""
+    """Estimate proximity based on RSSI signal strength."""
+    
     if rssi >= -60:
-        return "Immediate (Very Close, < 1.5m)"
+        return "Immediate (< 1.5m)"
+    
     elif -80 < rssi < -60:
-        return "Near (Same Room, 1.5m - 5m)"
-    else:
-        return "Far (Edge of Room / Displaced, > 5m)"
+        return "Near (1.5m - 5m)"
+    
+    return "Far (> 5m)"
+
 
 async def run_asset_scanner():
+
     print("=============================================")
-    print("   Initializing BLE Asset Tracking PoC...   ")
-    print("   Press Ctrl+C to terminate the scanner.    ")
-    print("=============================================\n")
-    
+    print("      BLE Asset Tracking System (PoC)")
+    print("=============================================")
+    print("Press Ctrl+C to stop scanning.\n")
+
     while True:
-        # BleakScanner.discover scans for the specified timeout duration (in seconds)
-        print("Scanning environment...")
+
+        print("Scanning environment...\n")
+
+        # Scan BLE devices for 4 seconds
         devices = await BleakScanner.discover(timeout=4.0)
-        
-        print(f"\n--- Scan Complete: Found {len(devices)} total BLE signals ---")
-        
+
+        print(f"Detected {len(devices)} BLE devices\n")
+
         target_detected = False
-        
+
         for device in devices:
-            # Check if the detected device matches our target asset registry
+
+            # Match scanned device against registered assets
             if device.address in TARGET_ASSETS:
-                asset_name = TARGET_ASSETS[device.address]
-                rssi = device.rssi  # Signal strength indicator (e.g., -65)
+
+                asset = TARGET_ASSETS[device.address]
+
+                rssi = device.rssi
                 proximity = estimate_proximity(rssi)
-                
-                print(f"📍 Detected: {asset_name}")
-                print(f"   Hardware ID: {device.address}")
-                print(f"   Signal Power: {rssi} dBm")
-                print(f"   Proximity:    {proximity}")
-                print("-" * 40)
-                print(device.address, device.name)
+
+                print("=================================")
+                print(f"Asset Name : {asset['name']}")
+                print(f"Department : {asset['dept']}")
+                print(f"Address    : {device.address}")
+                print(f"Device Name: {device.name}")
+                print(f"RSSI       : {rssi} dBm")
+                print(f"Proximity  : {proximity}")
+                print("=================================\n")
+
                 target_detected = True
-        
+
         if not target_detected:
-            print("No registered assets detected in this area.")
-            print("-" * 40)
-            
-        # Brief pause between scanning cycles to optimize network and hardware load
+            print("No registered assets detected.\n")
+
+        print("-" * 50)
+
+        # Delay before next scan cycle
         await asyncio.sleep(2)
 
+
 if __name__ == "__main__":
+
     try:
         asyncio.run(run_asset_scanner())
+
     except KeyboardInterrupt:
-        print("\n[System Info] Asset scanning suspended by user.")
+        print("\n[System] Scanner terminated by user.")
