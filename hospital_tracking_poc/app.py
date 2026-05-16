@@ -77,9 +77,13 @@ def estimate_proximity(rssi):
 # -----------------------------
 # BLE SCANNER LOOP
 # -----------------------------
+# -----------------------------
+# BLE SCANNER LOOP
+# -----------------------------
 async def ble_scanner_loop():
 
-    global LATEST_DATA
+    # 1. ADD NEARBY_DEVICES HERE SO FLASK CAN READ IT
+    global LATEST_DATA, NEARBY_DEVICES 
 
     while True:
 
@@ -104,6 +108,15 @@ async def ble_scanner_loop():
             for device in devices:
 
                 rssi = get_rssi(device)
+
+                # 2. ADD YOUR NEW CODE RIGHT HERE
+                name = device.name or "Unknown Device"
+                NEARBY_DEVICES.append({
+                    "name": name,
+                    "address": device.address,
+                    "rssi": f"{rssi} dBm" if rssi else "N/A"
+                })
+                # ----------------------------------------
 
                 # manufacturer data access (iBeacon)
                 md = getattr(device, "metadata", {}).get("manufacturer_data", {})
