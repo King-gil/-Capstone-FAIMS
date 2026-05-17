@@ -61,7 +61,7 @@ def parse_ibeacon_uuid(data: bytes):
 
 
 # -----------------------------
-# PROXIMITY MODEL
+# PROXIMITY MODEL123
 # -----------------------------
 def estimate_proximity(rssi):
     if rssi is None:
