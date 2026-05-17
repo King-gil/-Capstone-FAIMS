@@ -104,6 +104,8 @@
 
 <script>
 /* ===================== HELPERS ===================== */
+/* ===================== HELPERS ===================== */
+const openDrawers = new Set(); // Tracks which drawers are currently open
 function rssiToPercent(rssi) {
     if (rssi == null) return 0;
     return Math.max(0, Math.min(100, ((rssi + 100) / 60) * 100));
@@ -208,7 +210,14 @@ async function updateDashboard() {
                 ? `<span class="badge bg-light text-dark border ms-2" style="font-size:.7rem">~${adv.distance_m}m</span>`
                 : "";
 
-            const detailId = `asset-detail-${i}`;
+            // Use the asset name to create a stable ID, ignoring spaces/special chars
+            const safeName = asset.name.replace(/[^a-zA-Z0-9]/g, '-');
+            const detailId = `asset-detail-${safeName}`;
+            
+            // Check if this drawer was previously opened
+            const isOpen = openDrawers.has(detailId);
+            const drawerClass = isOpen ? "detail-drawer mt-2 open" : "detail-drawer mt-2";
+            const btnText = isOpen ? "▲ Hide Advertisement Data" : "▼ Show Advertisement Data";
 
             html += `
             <div class="col">
@@ -249,12 +258,13 @@ async function updateDashboard() {
                   <div class="mt-3">
                     <button class="btn btn-sm btn-outline-secondary w-100"
                       onclick="toggleDetail('${detailId}', this)">
-                      ▼ Show Advertisement Data
+                      ${btnText}
                     </button>
                   </div>
-                  <div class="detail-drawer mt-2" id="${detailId}">
-                    ${advDetailHTML(adv)}
-                  </div>` : ""}
+                  <div class="${drawerClass}" id="${detId}">
+                  ${advDetailHTML(d)}
+                </div>
+                  ` : ""}
 
                 </div>
                 <div class="card-footer bg-transparent border-0 text-end">
@@ -294,7 +304,13 @@ async function updateNearby() {
             const pct    = rssiToPercent(d.rssi);
             const clr    = rssiColor(d.rssi);
             const name   = d.local_name && d.local_name !== "—" ? d.local_name : (d.name || "Unknown Device");
-            const detId  = `nearby-detail-${i}`;
+            
+            // Use MAC address for a stable ID so drawers don't swap when RSSI sorting changes
+            const safeMac = d.address ? d.address.replace(/:/g, '') : `unknown-${i}`;
+            const detId   = `nearby-detail-${safeMac}`;
+            
+            const isOpen = openDrawers.has(detId);
+            const drawerClass = isOpen ? "detail-drawer open" : "detail-drawer";
 
             const ibeaconTag = d.ibeacon_uuid
                 ? `<span class="ibeacon-badge">iBeacon</span> `
@@ -343,13 +359,25 @@ async function updateNearby() {
 }
 
 /* ===================== TOGGLE DETAIL ===================== */
+/* ===================== TOGGLE DETAIL ===================== */
 function toggleDetail(id, btn) {
     const drawer = document.getElementById(id);
     if (!drawer) return;
-    drawer.classList.toggle('open');
-    if (btn) btn.textContent = drawer.classList.contains('open')
-        ? '▲ Hide Advertisement Data'
-        : '▼ Show Advertisement Data';
+    
+    const isOpen = drawer.classList.toggle('open');
+    
+    // Remember the state across re-renders
+    if (isOpen) {
+        openDrawers.add(id);
+    } else {
+        openDrawers.delete(id);
+    }
+    
+    if (btn) {
+        btn.textContent = isOpen
+            ? '▲ Hide Advertisement Data'
+            : '▼ Show Advertisement Data';
+    }
 }
 
 /* ===================== POLLING ===================== */
