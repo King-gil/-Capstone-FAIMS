@@ -18,10 +18,10 @@ TARGET_ASSETS = {
         }
     },
     "asset_pump": {
-        "name": "Asset 2 (Infusion Pump)",
+        "name": "Joshua's Phone",
         "dept": "EMERGENCY ROOM",
         "match": {
-            "address": "66:77:88:99:AA:BB",
+            "ibeacon_uuid": "00112233-4455-6677-8899-AABBCCDDEEFF",
         }
     }
 }
