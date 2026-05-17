@@ -8,10 +8,6 @@ app = Flask(__name__)
 
 # ---------------------------------------------------------------
 # ASSET REGISTRY
-# Match strategies (set as many as you want per asset):
-#   "ibeacon_uuid" : UUID found in iBeacon manufacturer payload
-#   "address"      : BLE MAC address (case-insensitive)
-#   "name"         : Advertised device name (substring, case-insensitive)
 # ---------------------------------------------------------------
 TARGET_ASSETS = {
     "asset_phone": {
@@ -30,7 +26,18 @@ TARGET_ASSETS = {
     }
 }
 
-LATEST_DATA = {}
+# Known BLE company IDs (subset of Bluetooth SIG registry)
+COMPANY_IDS = {
+    6:    "Microsoft",
+    76:   "Apple",
+    89:   "Nordic Semiconductor",
+    117:  "Samsung",
+    224:  "Google",
+    343:  "Garmin",
+    1177: "Tile",
+}
+
+LATEST_DATA    = {}
 NEARBY_DEVICES = []
 
 
@@ -38,10 +45,6 @@ NEARBY_DEVICES = []
 # iBeacon UUID PARSER
 # -----------------------------
 def parse_ibeacon_uuid(data: bytes):
-    """
-    Extract UUID from raw iBeacon manufacturer payload.
-    iBeacon: 02 15 <16-byte UUID> <major 2b> <minor 2b> <tx power 1b>
-    """
     try:
         hex_data = data.hex().lower()
         idx = hex_data.find("0215")
@@ -61,6 +64,49 @@ def parse_ibeacon_uuid(data: bytes):
 
 
 # -----------------------------
+# IBEACON FULL PARSER
+# Returns major, minor, tx_power from payload
+# -----------------------------
+def parse_ibeacon_full(data: bytes):
+    try:
+        hex_data = data.hex().lower()
+        idx = hex_data.find("0215")
+        if idx != -1:
+            base = idx + 4
+            if len(hex_data) >= base + 44:
+                major    = int(hex_data[base + 32: base + 36], 16)
+                minor    = int(hex_data[base + 36: base + 40], 16)
+                tx_power = int(hex_data[base + 40: base + 42], 16)
+                # tx_power is signed byte
+                if tx_power > 127:
+                    tx_power -= 256
+                return major, minor, tx_power
+    except Exception:
+        pass
+    return None, None, None
+
+
+# -----------------------------
+# DISTANCE ESTIMATOR
+# Uses log-distance path loss model
+# -----------------------------
+def estimate_distance(rssi, tx_power, path_loss_exp=2.0):
+    """
+    Returns estimated distance in metres.
+    tx_power: measured RSSI at 1m (from iBeacon payload or use -59 default)
+    path_loss_exp: 2.0 = free space, 3.0-4.0 = indoor with obstacles
+    """
+    if rssi is None or tx_power is None:
+        return None
+    try:
+        import math
+        distance = 10 ** ((tx_power - rssi) / (10 * path_loss_exp))
+        return round(distance, 2)
+    except Exception:
+        return None
+
+
+# -----------------------------
 # PROXIMITY MODEL
 # -----------------------------
 def estimate_proximity(rssi):
@@ -75,24 +121,98 @@ def estimate_proximity(rssi):
 
 
 # -----------------------------
+# FULL ADV DATA EXTRACTOR
+# Pulls every available field from device + adv
+# -----------------------------
+def extract_adv_data(device, adv):
+    rssi     = adv.rssi
+    mfr_data = adv.manufacturer_data or {}
+
+    # --- Manufacturer data ---
+    manufacturers = []
+    ibeacon_uuid  = None
+    ibeacon_major = None
+    ibeacon_minor = None
+    ibeacon_tx    = None
+
+    for company_id, payload in mfr_data.items():
+        company_name = COMPANY_IDS.get(company_id, f"Unknown (ID {company_id})")
+        hex_payload  = payload.hex().upper()
+
+        uuid = parse_ibeacon_uuid(payload)
+        if uuid:
+            ibeacon_uuid  = uuid
+            major, minor, tx = parse_ibeacon_full(payload)
+            ibeacon_major = major
+            ibeacon_minor = minor
+            ibeacon_tx    = tx
+
+        manufacturers.append({
+            "company_id":   company_id,
+            "company_name": company_name,
+            "hex_payload":  hex_payload,
+            "ibeacon_uuid": uuid
+        })
+
+    # --- Service data ---
+    service_data_parsed = []
+    for svc_uuid, svc_bytes in (adv.service_data or {}).items():
+        service_data_parsed.append({
+            "uuid":    svc_uuid,
+            "hex":     svc_bytes.hex().upper(),
+            "bytes":   len(svc_bytes)
+        })
+
+    # --- Distance estimate ---
+    # Prefer iBeacon tx_power, fall back to adv.tx_power, then default -59 dBm
+    ref_tx   = ibeacon_tx or adv.tx_power or -59
+    distance = estimate_distance(rssi, ref_tx)
+
+    # --- Device type hint from company ID ---
+    device_type = "Unknown"
+    for company_id in mfr_data.keys():
+        if company_id == 76:
+            device_type = "Apple Device"
+        elif company_id == 117:
+            device_type = "Samsung Device"
+        elif company_id == 6:
+            device_type = "Microsoft Device"
+        elif company_id == 224:
+            device_type = "Google Device"
+
+    return {
+        # --- BLEDevice fields ---
+        "address":          device.address,
+        "device_name":      device.name or "—",
+
+        # --- AdvertisementData fields ---
+        "local_name":       adv.local_name or "—",
+        "rssi":             rssi,
+        "tx_power":         adv.tx_power,           # advertised TX power (may be None)
+        "service_uuids":    adv.service_uuids or [],
+        "service_data":     service_data_parsed,
+        "manufacturers":    manufacturers,
+
+        # --- Parsed iBeacon fields ---
+        "ibeacon_uuid":     ibeacon_uuid,
+        "ibeacon_major":    ibeacon_major,
+        "ibeacon_minor":    ibeacon_minor,
+        "ibeacon_tx_power": ibeacon_tx,
+
+        # --- Derived fields ---
+        "distance_m":       distance,
+        "device_type":      device_type,
+    }
+
+
+# -----------------------------
 # ASSET MATCHER
 # -----------------------------
-def match_device(device, adv):
-    """Return asset_id if the device matches any registered rule, else None."""
+def match_device(device, adv, extracted):
     address  = (device.address or "").upper()
     adv_name = (adv.local_name or device.name or "").lower()
     mfr_data = adv.manufacturer_data or {}
-
-    # Parse iBeacon UUID from all manufacturer payloads
-    detected_uuid = None
-    for payload in mfr_data.values():
-        u = parse_ibeacon_uuid(payload)
-        if u:
-            detected_uuid = u
-            break
-
-    # Flat hex string for raw substring fallback
-    all_hex = "".join(v.hex() for v in mfr_data.values()).lower()
+    all_hex  = "".join(v.hex() for v in mfr_data.values()).lower()
 
     for asset_id, asset in TARGET_ASSETS.items():
         rules = asset.get("match", {})
@@ -100,9 +220,9 @@ def match_device(device, adv):
         if "ibeacon_uuid" in rules:
             target     = rules["ibeacon_uuid"].upper()
             target_raw = target.replace("-", "").lower()
-            if detected_uuid and detected_uuid == target:
+            if extracted["ibeacon_uuid"] and extracted["ibeacon_uuid"] == target:
                 return asset_id
-            if target_raw in all_hex:          # raw hex fallback
+            if target_raw in all_hex:
                 return asset_id
 
         if "address" in rules:
@@ -116,16 +236,9 @@ def match_device(device, adv):
     return None
 
 
-# ---------------------------------------------------------------
+# -----------------------------
 # BLE SCANNER LOOP
-#
-# THE KEY FIX: return_adv=True
-#   Without it, BleakScanner.discover() returns BLEDevice objects
-#   that do NOT reliably carry RSSI or manufacturer_data on Windows.
-#   With return_adv=True it returns:
-#       { address: (BLEDevice, AdvertisementData) }
-#   AdvertisementData has .rssi, .manufacturer_data, .local_name, etc.
-# ---------------------------------------------------------------
+# -----------------------------
 async def ble_scanner_loop():
     global LATEST_DATA, NEARBY_DEVICES
 
@@ -141,51 +254,67 @@ async def ble_scanner_loop():
                 scan_out[asset_id] = {
                     "name":      info["name"],
                     "dept":      info["dept"],
-                    "rssi":      "N/A",
+                    "rssi":      None,
                     "status":    "Offline",
                     "class":     "secondary",
                     "desc":      "Not Detected",
-                    "last_seen": "-"
+                    "last_seen": "-",
+                    "adv":       None        # full adv data block
                 }
 
-            print(f"\n--- Scan: {len(results)} device(s) found ---")
+            print(f"\n--- Scan: {len(results)} device(s) ---")
 
             for address, (device, adv) in results.items():
-                rssi = adv.rssi
-                name = adv.local_name or device.name or "Unknown Device"
+                extracted = extract_adv_data(device, adv)
+                rssi      = extracted["rssi"]
+                name      = extracted["local_name"] if extracted["local_name"] != "—" \
+                            else extracted["device_name"]
 
                 nearby.append({
-                    "name":    name,
-                    "address": device.address,
-                    "rssi":    f"{rssi} dBm" if rssi is not None else "N/A"
+                    "name":         name,
+                    "address":      extracted["address"],
+                    "rssi":         rssi,
+                    "tx_power":     extracted["tx_power"],
+                    "device_type":  extracted["device_type"],
+                    "local_name":   extracted["local_name"],
+                    "device_name":  extracted["device_name"],
+                    "service_uuids":extracted["service_uuids"],
+                    "service_data": extracted["service_data"],
+                    "manufacturers":extracted["manufacturers"],
+                    "ibeacon_uuid": extracted["ibeacon_uuid"],
+                    "ibeacon_major":extracted["ibeacon_major"],
+                    "ibeacon_minor":extracted["ibeacon_minor"],
+                    "ibeacon_tx_power": extracted["ibeacon_tx_power"],
+                    "distance_m":   extracted["distance_m"],
                 })
 
-                # Print every device so you can verify your phone appears
-                mfr_keys = list(adv.manufacturer_data.keys())
-                print(f"  [{device.address}] {name:<30} RSSI: {rssi:>5}  MFR: {mfr_keys}")
+                print(f"  [{extracted['address']}] {name:<28} "
+                      f"RSSI:{rssi:>5}  TX:{str(extracted['tx_power']):>5}  "
+                      f"Dist:{extracted['distance_m']}m  "
+                      f"Type:{extracted['device_type']}")
 
-                asset_id = match_device(device, adv)
+                asset_id = match_device(device, adv, extracted)
                 if asset_id:
                     prox = estimate_proximity(rssi)
                     scan_out[asset_id].update({
-                        "rssi":      f"{rssi} dBm" if rssi is not None else "N/A",
+                        "rssi":      rssi,
                         "status":    prox["status"],
                         "class":     prox["class"],
                         "desc":      prox["desc"],
-                        "last_seen": time.strftime("%H:%M:%S")
+                        "last_seen": time.strftime("%H:%M:%S"),
+                        "adv":       extracted
                     })
                     print(f"  ✅ MATCHED → {TARGET_ASSETS[asset_id]['name']} | "
-                          f"RSSI: {rssi} | {prox['status']}")
+                          f"RSSI:{rssi} | {prox['status']} | "
+                          f"~{extracted['distance_m']}m")
 
-            # Sort nearest first
-            def rssi_sort_key(d):
-                try:
-                    return int(d["rssi"].split()[0])
-                except Exception:
-                    return -999
-
-            NEARBY_DEVICES = sorted(nearby, key=rssi_sort_key, reverse=True)
-            LATEST_DATA    = scan_out
+            # Sort nearby: strongest RSSI first
+            NEARBY_DEVICES = sorted(
+                nearby,
+                key=lambda d: d["rssi"] if d["rssi"] is not None else -999,
+                reverse=True
+            )
+            LATEST_DATA = scan_out
 
         except Exception as e:
             print(f"Scanner Error: {e}")
