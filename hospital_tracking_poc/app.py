@@ -15,7 +15,7 @@ app = Flask(__name__)
 # ---------------------------------------------------------------
 TARGET_ASSETS = {
     "asset_phone": {
-        "name": "My Custom Phone Beacon",
+        "name": "Jhared's Phone",
         "dept": "MIS DEPARTMENT",
         "match": {
             "ibeacon_uuid": "C216FE14-8047-4978-92C3-68919B540D4F",
